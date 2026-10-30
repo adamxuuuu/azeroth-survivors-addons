@@ -1,4 +1,5 @@
 local frames = {};
+local globals = {};
 local function widget()
     local w = {scripts = {}, strings = {}, textures = {}};
     function w:SetWidth(v) self.width = v; end
@@ -14,6 +15,12 @@ local function widget()
     function w:SetJustifyH() end
     function w:SetNonSpaceWrap() end
     function w:SetText(v) self.text = v; end
+    function w:GetText() return self.text; end
+    function w:SetOwner() end
+    function w:ClearLines() end
+    function w:SetAction(slot)
+        globals["CombatClusterIconLookupTextLeft1"].text = slot == 1 and "奥术飞弹" or nil;
+    end
     function w:SetTextColor(r,g,b) self.color = {r,g,b}; end
     function w:SetAlpha(v) self.alpha = v; end
     function w:Show() self.shown = true; end
@@ -26,10 +33,17 @@ local function widget()
     return w;
 end
 UIParent = widget(); UIParent.width = 1000;
-function CreateFrame() local w = widget(); table.insert(frames,w); return w; end
+function CreateFrame(kind, name)
+    local w = widget(); table.insert(frames,w);
+    if (kind == "GameTooltip") then globals[name.."TextLeft1"] = widget(); end
+    return w;
+end
 function GetLocale() return 'enUS'; end
 local warnings = 0;
-function getglobal() return {AddMessage = function() warnings = warnings + 1; end}; end
+function getglobal(name)
+    if (name == "DEFAULT_CHAT_FRAME") then return {AddMessage = function() warnings = warnings + 1; end}; end
+    return globals[name];
+end
 local cvar = '1';
 function GetCVar() return cvar; end
 function SetCVar(name,value) assert(name == 'CombatDamage'); cvar = value; end
@@ -87,6 +101,11 @@ meter[10].dmg = 2200; tick(4);
 assert(panel.textures[1].texture == 'timer-icon'); -- works with no spellbook texture API
 UIParent.width = 1500; meter[10].dmg = 2300; tick(4);
 assert(panel.anchor[4] == -300); -- follows resolution changes
+-- Browser-style empty spellbook: resolve localized damage source via action tooltip.
+GetNumSpellTabs = function() return 0; end;
+function GetActionTexture(slot) return slot == 1 and 'arcane-action-icon' or nil; end
+meter = {{name='奥术飞弹',dmg=500}}; tick(4);
+assert(panel.textures[1].texture == 'arcane-action-icon');
 -- Another run is detected even if no terminal phase was sampled.
 time=-1; tick(); assert(not panel.shown);
 tick(4); assert(not panel.shown);

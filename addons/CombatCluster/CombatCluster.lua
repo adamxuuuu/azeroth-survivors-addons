@@ -65,6 +65,7 @@ local function snapshot()
     end
     return totals;
 end
+local iconLookup;
 local function spellIcons()
     local icons = {};
     -- The browser client publishes localized names and texture paths together here.
@@ -77,14 +78,36 @@ local function spellIcons()
             end
         end
     end
-    if (not GetNumSpellTabs or not GetSpellTabInfo or not GetSpellName or not GetSpellTexture) then return icons; end
-    for tab = 1, GetNumSpellTabs() do
-        local _, _, offset, count = GetSpellTabInfo(tab);
-        if (type(offset) == "number" and type(count) == "number") then
-            for slot = offset + 1, math.min(offset + count, 1024) do
-                local name = GetSpellName(slot, "spell");
-                if (name and not icons[name]) then icons[name] = GetSpellTexture(slot, "spell"); end
+    if (GetNumSpellTabs and GetSpellTabInfo and GetSpellName and GetSpellTexture) then
+        for tab = 1, GetNumSpellTabs() do
+            local _, _, offset, count = GetSpellTabInfo(tab);
+            if (type(offset) == "number" and type(count) == "number") then
+                for slot = offset + 1, math.min(offset + count, 1024) do
+                    local name = GetSpellName(slot, "spell");
+                    if (name and not icons[name]) then icons[name] = GetSpellTexture(slot, "spell"); end
+                end
             end
+        end
+    end
+    -- Survivors can populate the action bar without populating the WoW spellbook.
+    if (GetActionTexture) then
+        if (not iconLookup) then
+            iconLookup = CreateFrame("GameTooltip", "CombatClusterIconLookup", UIParent, "GameTooltipTemplate");
+            iconLookup:Hide();
+        end
+        if (iconLookup.SetOwner and iconLookup.ClearLines and iconLookup.SetAction) then
+            iconLookup:SetOwner(UIParent, "ANCHOR_NONE");
+            for slot = 1, 12 do
+                local texture = GetActionTexture(slot);
+                if (texture) then
+                    iconLookup:ClearLines();
+                    local ok = pcall(function() iconLookup:SetAction(slot); end);
+                    local first = getglobal("CombatClusterIconLookupTextLeft1");
+                    local name = ok and first and first:GetText();
+                    if (type(name) == "string" and name ~= "" and not icons[name]) then icons[name] = texture; end
+                end
+            end
+            iconLookup:Hide();
         end
     end
     return icons;
@@ -167,6 +190,14 @@ if (SlashCmdList) then
     SlashCmdList["COMBATCLUSTER"] = function(text)
         if (text == "off") then enabled = false; stop(); message("off; original damage text restored");
         elseif (text == "on") then enabled = true; message("on");
-        else message("/ccluster on | /ccluster off"); end
+        elseif (text == "debug") then
+            local icons = spellIcons();
+            message("v1.3.0 tabs=" .. tostring(GetNumSpellTabs and GetNumSpellTabs()) .. " timers=" .. table.getn(AZS_TIMERS or {}));
+            local lines = AZS_GetMeter and AZS_GetMeter() or {};
+            for i = 1, math.min(table.getn(lines), 10) do
+                local name = lines[i].name;
+                message(tostring(name) .. " => " .. tostring(icons[name] or "NO MATCH"));
+            end
+        else message("/ccluster on | off | debug"); end
     end;
 end
