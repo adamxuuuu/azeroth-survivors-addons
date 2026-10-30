@@ -1,22 +1,16 @@
 local panel = CreateFrame("Frame", "CombatClusterPanel", UIParent);
-panel:SetWidth(140);
-panel:SetHeight(224);
-panel:SetFrameStrata("MEDIUM");
-panel:Hide();
-local chinese = GetLocale and string.sub(GetLocale(), 1, 2) == "zh";
+panel:SetWidth(140); panel:SetHeight(224);
+panel:SetFrameStrata("MEDIUM"); panel:Hide();
 local rows = {};
 for i = 1, 8 do
     local amount = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge");
-    local _, size = amount:GetFont();
+    local font, size, flags = amount:GetFont();
     size = size or 16;
     local icon = panel:CreateTexture(nil, "OVERLAY");
     icon:SetWidth(size); icon:SetHeight(size);
-    -- Anchor both regions to the frame, avoiding FontString-relative texture placement.
-    icon:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -(i - 1) * 28);
-    amount:SetPoint("TOPLEFT", panel, "TOPLEFT", size + 6, -(i - 1) * 28);
     amount:SetWidth(110); amount:SetHeight(size); amount:SetJustifyH("LEFT");
-    icon:Hide();
-    rows[i] = {amount = amount, icon = icon};
+    rows[i] = {amount = amount, icon = icon, font = font, size = size, flags = flags, life = 0};
+    icon:Hide(); amount:Hide();
 end
 
 -- Stable source colors; skill icons identify sources when colors repeat.
@@ -34,36 +28,23 @@ local function number(value)
     if (value >= 1000) then return string.format("%.1fK", value / 1000); end
     return string.format("%.0f", value);
 end
-local enabled = true;
-local active = false;
-local baseline, pending = {}, {};
-local elapsed, window, age = 0, 0, 0;
+local enabled, active = true, false;
 local previousDamage;
-local lastTime;
-local warned = false;
-local function message(text)
+local groups = {};
+local queue = {};
+local nextRow = 1;
+local function message(value)
     local chat = getglobal("DEFAULT_CHAT_FRAME");
-    if (chat) then chat:AddMessage("Combat Cluster: " .. text); end
+    if (chat) then chat:AddMessage("Combat Cluster: " .. value); end
+end
+local function clear()
+    groups = {}; queue = {}; nextRow = 1;
+    for i = 1, 8 do rows[i].life = 0; rows[i].icon:Hide(); rows[i].amount:Hide(); end
+    panel:Hide();
 end
 local function stop()
     if (active and previousDamage ~= nil and SetCVar) then SetCVar("CombatDamage", previousDamage); end
-    active = false;
-    baseline, pending = {}, {};
-    window, age = 0, 0;
-    lastTime = nil;
-    panel:Hide();
-end
-local function snapshot()
-    local lines = AZS_GetMeter();
-    if (type(lines) ~= "table") then return nil; end
-    local totals = {};
-    for i = 1, table.getn(lines) do
-        local line = lines[i];
-        if (type(line.name) == "string" and type(line.dmg) == "number" and line.dmg >= 0) then
-            totals[line.name] = (totals[line.name] or 0) + line.dmg;
-        end
-    end
-    return totals;
+    active = false; clear();
 end
 local iconLookup;
 local function spellIcons()
@@ -140,93 +121,114 @@ local function sourceIcon(name, liveIcons)
     end
     return nil;
 end
-local function display()
-    local list = {};
-    for name, value in pairs(pending) do table.insert(list, {name = name, value = value}); end
-    pending = {};
-    if (table.getn(list) == 0) then return; end
-    table.sort(list, function(a, b)
-        if (a.value == b.value) then return a.name < b.name; end
-        return a.value > b.value;
-    end);
-    if (table.getn(list) > 7) then
-        local other = 0;
-        for i = 8, table.getn(list) do other = other + list[i].value; end
-        list[8] = {name = chinese and "其他" or "Other", value = other, other = true};
-        for i = table.getn(list), 9, -1 do list[i] = nil; end
-    end
+local function show(group)
+    local row = rows[nextRow];
+    nextRow = math.mod(nextRow, 8) + 1;
+    row.group = group; row.life = 3;
     local icons = spellIcons();
-    for i = 1, 8 do
-        local item = list[i];
-        local row = rows[i];
-        if (item) then
-            local c = item.other and {0.78, 0.78, 0.78} or color(item.name);
-            row.amount:SetText(number(item.value));
-            row.icon:SetTexture(item.other and "Interface\\Icons\\INV_Misc_Book_09"
-                or sourceIcon(item.name, icons) or "Interface\\Icons\\INV_Misc_QuestionMark");
-            row.icon:Show();
-            row.amount:SetTextColor(c[1], c[2], c[3]);
+    local c = color(group.name);
+    row.amount:SetText(number(group.damage));
+    row.amount:SetTextColor(c[1], c[2], c[3]);
+    if (row.font) then row.amount:SetFont(row.font, row.size * (group.crit and 1.5 or 1), row.flags); end
+    row.icon:SetTexture(sourceIcon(group.name, icons) or "Interface\\Icons\\INV_Misc_QuestionMark");
+    row.icon:Show(); row.amount:Show();
+    panel:ClearAllPoints(); panel:SetPoint("RIGHT", UIParent, "RIGHT", -UIParent:GetWidth() * 0.2, 0);
+    panel:Show();
+end
+local function parse(eventName, line)
+    if (type(line) ~= "string") then return nil; end
+    local name, amount, crit;
+    if (eventName == "CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE" or eventName == "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_DAMAGE") then
+        local _, _, n, a, spell = string.find(line, "^(.+) suffers (%d+) .+ damage from your (.+)$");
+        name, amount, crit = spell, a, string.find(line, "%(Critical%)") ~= nil;
+    else
+        local _, _, spell, victim, a = string.find(line, "^Your (.+) crits (.+) for (%d+)");
+        if (spell) then name, amount, crit = spell, a, true;
         else
-            row.amount:SetText(""); row.icon:Hide();
+            _, _, spell, victim, a = string.find(line, "^Your (.+) hits (.+) for (%d+)");
+            if (spell) then name, amount = spell, a;
+            else
+                _, _, spell, victim, a = string.find(line, "^Your (.+) causes (.+) (%d+)");
+                if (spell) then name, amount = spell, a;
+                else
+                    _, _, victim, a = string.find(line, "^You crit (.+) for (%d+)");
+                    if (a) then name, amount, crit = "Melee", a, true;
+                    else
+                        _, _, victim, a = string.find(line, "^You hit (.+) for (%d+)");
+                        if (a) then name, amount = "Melee", a; end
+                    end
+                end
+            end
         end
     end
-    panel:ClearAllPoints();
-    panel:SetPoint("RIGHT", UIParent, "RIGHT", -UIParent:GetWidth() * 0.2, 0);
-    age = 0;
-    panel:SetAlpha(1); panel:Show();
+    amount = tonumber(amount);
+    if (name and amount and amount > 0) then return name, amount, crit; end
 end
 local driver = CreateFrame("Frame");
 driver:RegisterEvent("PLAYER_LOGOUT");
-driver:SetScript("OnEvent", stop);
-driver:SetScript("OnUpdate", function()
-    elapsed = elapsed + arg1;
-    if (elapsed < 0.2) then return; end
-    local dt = elapsed;
-    elapsed = 0;
-    if (not enabled) then return; end
-    if (not AZS_GetPhase or not AZS_GetMeter or not AZS_GetRunTime) then
-        if (not warned) then message("required AZS damage meter API unavailable"); warned = true; end
-        stop(); return;
+for _, name in ipairs({"CHAT_MSG_SPELL_SELF_DAMAGE", "CHAT_MSG_COMBAT_SELF_HITS",
+    "CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE", "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_DAMAGE"}) do
+    driver:RegisterEvent(name);
+end
+-- shortcut: same-spell hits arriving within 0.12s are treated as one burst; a true cast ID would replace this rule.
+driver:SetScript("OnEvent", function()
+    if (event == "PLAYER_LOGOUT") then stop(); return; end
+    if (not enabled or not AZS_GetPhase or AZS_GetPhase() ~= "playing") then return; end
+    local name, damage, crit = parse(event, arg1);
+    if (not name) then return; end
+    local now = GetTime();
+    local group = groups[name];
+    if (not group or now - group.last > 0.12) then
+        group = {name = name, damage = 0, crit = false, last = now, ready = now + 0.12};
+        groups[name] = group; table.insert(queue, group);
     end
-    local phase = AZS_GetPhase();
+    group.damage = group.damage + damage;
+    group.crit = group.crit or crit;
+    group.last = now;
+    group.ready = now + 0.12;
+end);
+driver:SetScript("OnUpdate", function()
+    if (not enabled) then return; end
+    local phase = AZS_GetPhase and AZS_GetPhase();
     if (phase == nil or phase == "ready" or phase == "dead" or phase == "victory") then stop(); return; end
-    if (phase ~= "playing") then panel:Hide(); return; end
-    local totals = snapshot();
-    local now = AZS_GetRunTime();
-    if (not totals or type(now) ~= "number") then stop(); return; end
-    if (active and lastTime and now < lastTime) then stop(); end
-    lastTime = now;
+    if (phase ~= "playing") then return; end
     if (not active) then
-        baseline = totals;
         previousDamage = GetCVar and GetCVar("CombatDamage");
         if (previousDamage ~= nil and SetCVar) then SetCVar("CombatDamage", "0"); end
         active = true;
-        return;
     end
-    for name, total in pairs(totals) do
-        local delta = total - (baseline[name] or 0);
-        if (delta > 0) then pending[name] = (pending[name] or 0) + delta; end
-        baseline[name] = total;
+    local now = GetTime();
+    for i = 1, table.getn(queue) do
+        local group = queue[i];
+        if (now >= group.ready and rows[nextRow].life <= 0) then
+            if (groups[group.name] == group) then groups[group.name] = nil; end
+            show(group); table.remove(queue, i);
+            break;
+        end
     end
-    window = window + dt;
-    age = age + dt;
-    if (window >= 0.75) then window = 0; display(); end
-    if (age >= 2) then panel:Hide();
-    elseif (age > 1) then panel:SetAlpha(2 - age); end
+    local any = false;
+    for i = 1, 8 do
+        local row = rows[i];
+        if (row.life > 0) then
+            row.life = row.life - arg1;
+            if (row.life <= 0) then row.icon:Hide(); row.amount:Hide();
+            else
+                any = true;
+                local y = -(i - 1) * 28 + (3 - row.life) * 20;
+                row.icon:ClearAllPoints(); row.icon:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, y);
+                row.amount:ClearAllPoints(); row.amount:SetPoint("TOPLEFT", panel, "TOPLEFT", row.size + 6, y);
+                local alpha = math.min(1, row.life);
+                row.icon:SetAlpha(alpha); row.amount:SetAlpha(alpha);
+            end
+        end
+    end
+    if (not any) then panel:Hide(); end
 end);
 if (SlashCmdList) then
     SLASH_COMBATCLUSTER1 = "/ccluster";
     SlashCmdList["COMBATCLUSTER"] = function(text)
-        if (text == "off") then enabled = false; stop(); message("off; original damage text restored");
+        if (text == "off") then enabled = false; stop(); message("off");
         elseif (text == "on") then enabled = true; message("on");
-        elseif (text == "debug") then
-            local icons = spellIcons();
-            message("v1.4.0 tabs=" .. tostring(GetNumSpellTabs and GetNumSpellTabs()) .. " timers=" .. table.getn(AZS_TIMERS or {}));
-            local lines = AZS_GetMeter and AZS_GetMeter() or {};
-            for i = 1, math.min(table.getn(lines), 10) do
-                local name = lines[i].name;
-                message(tostring(name) .. " => " .. tostring(sourceIcon(name, icons) or "NO MATCH"));
-            end
-        else message("/ccluster on | off | debug"); end
+        else message("/ccluster on | off"); end
     end;
 end
