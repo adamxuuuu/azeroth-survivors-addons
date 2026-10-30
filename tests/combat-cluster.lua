@@ -54,8 +54,9 @@ function AZS_GetMeter() return meter; end
 function GetNumSpellTabs() return 1; end
 function GetSpellTabInfo() return "Skills", nil, 0, 2; end
 function GetSpellName(slot, book) assert(book == "spell"); return ({"Fireball", "Cleave"})[slot]; end
-function GetSpellTexture(slot, book) assert(book == "spell"); return ({"fire-icon", "cleave-icon"})[slot]; end
+function GetSpellTexture(slot, book) assert(book == "spell"); return ({"Interface\\Icons\\fire-icon", "Interface\\Icons\\cleave-icon"})[slot]; end
 SlashCmdList = {};
+dofile('addons/CombatCluster/IconData.lua');
 dofile('addons/CombatCluster/CombatCluster.lua');
 local panel, driver = frames[1], frames[2];
 local function tick(n)
@@ -70,7 +71,7 @@ phase = 'playing'; meter = {{name='Fireball',dmg=100}};
 tick(); assert(cvar == '0' and not panel.shown); -- late installation seeds historical totals
 meter[1].dmg = 120; tick(); meter[1].dmg = 150; tick(); tick(2);
 assert(panel.shown and amount(1) == '50');
-assert(panel.textures[1].texture == "fire-icon" and panel.textures[1].shown);
+assert(panel.textures[1].texture == "Interface\\Icons\\fire-icon" and panel.textures[1].shown);
 assert(panel.textures[1].width == 18 and panel.textures[1].height == 18);
 assert(panel.textures[1].anchor[2] == panel);
 assert(panel.strings[1].anchor[4] == 24); -- font size + 6px gap
@@ -81,7 +82,7 @@ local fireColor = panel.strings[1].color;
 tick(11); assert(not panel.shown); -- unchanged snapshots never count twice
 meter = {{name='Fireball',dmg=200}, {name='Cleave',dmg=1500}}; tick(4);
 assert(amount(1) == '1.5K');
-assert(panel.textures[1].texture == "cleave-icon" and panel.textures[2].texture == "fire-icon");
+assert(panel.textures[1].texture == "Interface\\Icons\\cleave-icon" and panel.textures[2].texture == "Interface\\Icons\\fire-icon");
 local movedColor = panel.strings[2].color;
 for i=1,3 do assert(fireColor[i] == movedColor[i]); end
 meter = {{name='Cleave',dmg=1500}}; tick(4);
@@ -92,20 +93,29 @@ phase='dead'; tick(); assert(cvar == '1');
 phase='playing'; meter={}; tick();
 for i=1,10 do meter[i]={name='Source'..i,dmg=i*100}; end
 tick(4); assert(amount(1)=='1.0K' and amount(8)=='600');
-assert(panel.textures[8].texture == "Interface\\Icons\\INV_Misc_QuestionMark");
+assert(panel.textures[8].texture == "Interface\\Icons\\INV_Misc_Book_09");
 -- Missing icon APIs must not break damage display.
 GetSpellTexture = nil; meter[10].dmg = 2000; tick(4);
 assert(panel.textures[1].texture == "Interface\\Icons\\INV_Misc_QuestionMark");
-AZS_TIMERS = {{name='Source10', icon='timer-icon'}};
+AZS_TIMERS = {{name='Source10', icon='Interface\\Icons\\timer-icon'}};
 meter[10].dmg = 2200; tick(4);
-assert(panel.textures[1].texture == 'timer-icon'); -- works with no spellbook texture API
+assert(panel.textures[1].texture == 'Interface\\Icons\\timer-icon'); -- works with no spellbook texture API
 UIParent.width = 1500; meter[10].dmg = 2300; tick(4);
 assert(panel.anchor[4] == -300); -- follows resolution changes
 -- Browser-style empty spellbook: resolve localized damage source via action tooltip.
 GetNumSpellTabs = function() return 0; end;
-function GetActionTexture(slot) return slot == 1 and 'arcane-action-icon' or nil; end
+function GetActionTexture(slot) return slot == 1 and 'Interface\\Icons\\arcane-action-icon' or nil; end
 meter = {{name='奥术飞弹',dmg=500}}; tick(4);
-assert(panel.textures[1].texture == 'arcane-action-icon');
+assert(panel.textures[1].texture == 'Interface\\Icons\\arcane-action-icon');
+-- Passive talents, localized aliases, and item-trigger spell suffixes need no live slot.
+meter = {{name='火焰冲撞',dmg=900}, {name='法术连击',dmg=800}, {name='炎魔之王项圈: Fireball',dmg=700}}; tick(4);
+assert(panel.textures[1].texture == "Interface\\Icons\\Spell_Fire_Volcano");
+assert(panel.textures[2].texture == "Interface\\Icons\\Spell_Fire_Fireball02");
+assert(panel.textures[3].texture == "Interface\\Icons\\Spell_Fire_FlameBolt");
+-- A runtime question mark must not mask an available static icon.
+AZS_TIMERS = {{name='火焰冲撞', icon='Interface\\Icons\\INV_Misc_QuestionMark'}};
+meter[1].dmg = 1000; tick(4);
+assert(panel.textures[1].texture == "Interface\\Icons\\Spell_Fire_Volcano");
 -- Another run is detected even if no terminal phase was sampled.
 time=-1; tick(); assert(not panel.shown);
 tick(4); assert(not panel.shown);

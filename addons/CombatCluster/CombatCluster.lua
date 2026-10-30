@@ -112,6 +112,34 @@ local function spellIcons()
     end
     return icons;
 end
+local function texturePath(value)
+    if (type(value) ~= "string" or value == "" or string.find(string.lower(value), "questionmark", 1, true)) then return nil; end
+    if (string.find(value, "\\", 1, true) or string.find(value, "/", 1, true)) then return value; end
+    if (string.find(value, "^Spell_") or string.find(value, "^Ability_") or string.find(value, "^INV_") or string.find(value, "^Trade_")) then
+        return "Interface\\Icons\\" .. value;
+    end
+    return nil;
+end
+local function sourceIcon(name, liveIcons)
+    local canonical = (CombatClusterIconNames and CombatClusterIconNames[name])
+        or (AZSSpellMeterName and AZSSpellMeterName[name]) or name;
+    local path = texturePath(liveIcons[name]) or texturePath(liveIcons[canonical])
+        or texturePath(CombatClusterIconFiles and CombatClusterIconFiles[canonical])
+        or texturePath(AZSSpellMeterIcon and AZSSpellMeterIcon[canonical]);
+    if (path) then return path; end
+    -- Equipment procs can be named "item: spell"; the suffix identifies the actual spell.
+    local _, _, item, spell = string.find(name, "^(.-):%s*(.+)$");
+    if (not item) then _, _, item, spell = string.find(name, "^(.-)：%s*(.+)$"); end
+    if (item and item ~= "" and spell ~= "") then
+        path = sourceIcon(spell, liveIcons) or sourceIcon(item, liveIcons);
+        if (path) then return path; end
+    end
+    if (GetItemInfo) then
+        local _, _, _, _, _, _, _, _, ninth, tenth = GetItemInfo(name);
+        return texturePath(tenth) or texturePath(ninth);
+    end
+    return nil;
+end
 local function display()
     local list = {};
     for name, value in pairs(pending) do table.insert(list, {name = name, value = value}); end
@@ -134,7 +162,8 @@ local function display()
         if (item) then
             local c = item.other and {0.78, 0.78, 0.78} or color(item.name);
             row.amount:SetText(number(item.value));
-            row.icon:SetTexture((not item.other and icons[item.name]) or "Interface\\Icons\\INV_Misc_QuestionMark");
+            row.icon:SetTexture(item.other and "Interface\\Icons\\INV_Misc_Book_09"
+                or sourceIcon(item.name, icons) or "Interface\\Icons\\INV_Misc_QuestionMark");
             row.icon:Show();
             row.amount:SetTextColor(c[1], c[2], c[3]);
         else
@@ -192,11 +221,11 @@ if (SlashCmdList) then
         elseif (text == "on") then enabled = true; message("on");
         elseif (text == "debug") then
             local icons = spellIcons();
-            message("v1.3.0 tabs=" .. tostring(GetNumSpellTabs and GetNumSpellTabs()) .. " timers=" .. table.getn(AZS_TIMERS or {}));
+            message("v1.4.0 tabs=" .. tostring(GetNumSpellTabs and GetNumSpellTabs()) .. " timers=" .. table.getn(AZS_TIMERS or {}));
             local lines = AZS_GetMeter and AZS_GetMeter() or {};
             for i = 1, math.min(table.getn(lines), 10) do
                 local name = lines[i].name;
-                message(tostring(name) .. " => " .. tostring(icons[name] or "NO MATCH"));
+                message(tostring(name) .. " => " .. tostring(sourceIcon(name, icons) or "NO MATCH"));
             end
         else message("/ccluster on | off | debug"); end
     end;
