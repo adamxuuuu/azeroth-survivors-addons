@@ -1,0 +1,5 @@
+## Interface: 11200
+## Title: Queued Level Ups
+## Notes: Bank level-up choices until you click the stock Level Up button.
+## Version: 1.0.0
+QueuedLevelUps.lua
